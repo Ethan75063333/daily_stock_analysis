@@ -387,7 +387,7 @@ class AkshareFetcher(BaseFetcher):
     name = "AkshareFetcher"
     priority = int(os.getenv("AKSHARE_PRIORITY", "1"))
     
-    def __init__(self, sleep_min: float = 3.0, sleep_max: float = 6.0):
+    def __init__(self, sleep_min: float = 2.0, sleep_max: float = 5.0):
         """
         初始化 AkshareFetcher
         
@@ -1649,42 +1649,7 @@ class AkshareFetcher(BaseFetcher):
         except Exception as e:
             logger.error(f"[API错误] 获取 {stock_code} 筹码分布失败: {e}")
             return None
-            def get_money_flow(self, stock_code: str) -> Optional[pd.DataFrame]:
-    """
-    免费获取个股资金流向（东方财富 ak.stock_individual_fund_flow_em）
-    返回当日主力/超大单/大单/中单/小单净流入，适配流水线资金分析模块
-    """
-    import akshare as ak
-    # 复用文件已定义的过滤函数，过滤无资金流标的
-    if _is_us_code(stock_code) or _is_hk_code(stock_code) or _is_etf_code(stock_code):
-        return None
-    try:
-        self._set_random_user_agent()
-        self._enforce_rate_limit()
-        logger.info(f"[API调用] ak.stock_individual_fund_flow_em(symbol={stock_code}) 获取资金流数据")
-        df = ak.stock_individual_fund_flow_em(symbol=stock_code)
-        if df.empty:
-            logger.warning(f"{stock_code} 资金流接口返回空数据")
-            return None
-        # 标准化列名，匹配系统原有资金流字段
-        rename_map = {
-            "日期": "date",
-            "主力净流入-净额": "main_net_amount",
-            "主力净流入-占比": "main_net_ratio",
-            "超大单净流入-净额": "super_net_amount",
-            "大单净流入-净额": "big_net_amount",
-            "中单净流入-净额": "mid_net_amount",
-            "小单净流入-净额": "small_net_amount",
-            "收盘价": "close"
-        }
-        df = df.rename(columns=rename_map)
-        df["code"] = stock_code
-        logger.info(f"[资金流] {stock_code} 获取成功，最新日期：{df['date'].iloc[-1]}")
-        return df
-    except Exception as e:
-        logger.error(f"获取{stock_code}资金流向失败: {e}")
-        return None
-        
+    
     def get_enhanced_data(self, stock_code: str, days: int = 60) -> Dict[str, Any]:
         """
         获取增强数据（历史K线 + 实时行情 + 筹码分布）
