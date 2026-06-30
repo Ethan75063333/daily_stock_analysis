@@ -164,13 +164,16 @@ class UnifiedRealtimeQuote:
         }
         # 只添加非 None 的字段
         optional_fields = [
-            'fetched_at', 'provider_timestamp', 'is_stale', 'stale_seconds',
-            'fallback_from',
-            'price', 'change_pct', 'change_amount', 'volume', 'amount',
-            'volume_ratio', 'turnover_rate', 'amplitude',
-            'open_price', 'high', 'low', 'pre_close',
-            'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
-            'change_60d', 'high_52w', 'low_52w'
+    'fetched_at', 'provider_timestamp', 'is_stale', 'stale_seconds',
+    'fallback_from',
+    'price', 'change_pct', 'change_amount', 'volume', 'amount',
+    'volume_ratio', 'turnover_rate', 'amplitude',
+    'open_price', 'high', 'low', 'pre_close',
+    'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
+    'change_60d', 'high_52w', 'low_52w',
+    'capital_flow',
+    'chip_distribution'
+]
         ]
         for f in optional_fields:
             val = getattr(self, f, None)
