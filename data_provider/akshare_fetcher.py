@@ -1101,6 +1101,17 @@ class AkshareFetcher(BaseFetcher):
             
             logger.info(f"[实时行情-东财] {stock_code} {quote.name}: 价格={quote.price}, 涨跌={quote.change_pct}%, "
                        f"量比={quote.volume_ratio}, 换手率={quote.turnover_rate}%")
+
+# ======== 在这里粘贴下面4行代码 ========
+# 拉取资金流与筹码数据
+capital_flow_data = self.get_stock_capital_flow(stock_code)
+chip_data = self.get_stock_chip_distribution(stock_code)
+# 挂载到行情对象
+quote.capital_flow = capital_flow_data
+quote.chip_distribution = chip_data
+# ======================================
+
+return quote
             return quote
             
         except Exception as e:
