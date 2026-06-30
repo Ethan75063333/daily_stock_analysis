@@ -418,7 +418,65 @@ class AkshareFetcher(BaseFetcher):
             logger.debug(f"设置 User-Agent: {random_ua[:50]}...")
         except Exception as e:
             logger.debug(f"设置 User-Agent 失败: {e}")
-    
+    def get_stock_capital_flow(self, stock_code: str) -> dict:
+        """
+        获取个股当日资金流向数据
+        返回：主力净流入、超大单/大单/中单/小单净额、成交额占比
+        """
+        import akshare as ak
+        try:
+            # 复用类内随机休眠防爬
+            time.sleep(random.uniform(self.sleep_min, self.sleep_max))
+            # 自动区分沪/深市场
+            if stock_code.startswith(("60", "68")):
+                market = "sh"
+            else:
+                market = "sz"
+            df = ak.stock_individual_fund_flow(stock=stock_code, market=market)
+            df_today = df.iloc[-1]  # 取最新一日当日数据
+            capital_data = {
+                "main_net_inflow": float(df_today["主力净流入-净额"]),
+                "super_large_net": float(df_today["超大单-净额"]),
+                "large_net": float(df_today["大单-净额"]),
+                "mid_net": float(df_today["中单-净额"]),
+                "small_net": float(df_today["小单-净额"]),
+                "main_ratio": float(df_today["主力净流入-占比"]),
+                "trade_date": str(df_today["日期"])
+            }
+            return capital_data
+        except Exception as e:
+            logging.warning(f"获取{stock_code}资金流失败: {str(e)}")
+            return {}
+    def get_stock_chip_distribution(self, stock_code: str) -> dict:
+        """
+        AK免费接口获取个股筹码分布数据
+        解决日志 chip_distribution_missing 缺失问题
+        返回：平均成本、获利比例、筹码集中度、70/90%筹码上下限
+        """
+        import akshare as ak
+        try:
+            time.sleep(random.uniform(self.sleep_min, self.sleep_max))
+            if stock_code.startswith(("60", "68")):
+                full_code = f"sh{stock_code}"
+            else:
+                full_code = f"sz{stock_code}"
+            df_chip = ak.stock_cyq_em(symbol=full_code)
+            chip_summary = df_chip.iloc[0]
+            chip_data = {
+                "avg_cost": float(chip_summary["平均成本"]),
+                "profit_ratio": float(chip_summary["获利比例"]),
+                "chip_90_low": float(chip_summary["90%成本下限"]),
+                "chip_90_high": float(chip_summary["90%成本上限"]),
+                "chip_90_concentration": float(chip_summary["90%筹码集中度"]),
+                "chip_70_low": float(chip_summary["70%成本下限"]),
+                "chip_70_high": float(chip_summary["70%成本上限"]),
+                "chip_70_concentration": float(chip_summary["70%筹码集中度"]),
+                "chip_detail": df_chip.to_dict("records")
+            }
+            return chip_data
+        except Exception as e:
+            logging.warning(f"获取{stock_code}筹码分布失败: {str(e)}")
+            return {}
     def _enforce_rate_limit(self) -> None:
         """
         强制执行速率限制
