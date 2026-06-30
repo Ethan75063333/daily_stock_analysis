@@ -186,7 +186,8 @@ class UnifiedRealtimeQuote:
         """检查是否有量价数据"""
         return self.volume_ratio is not None or self.turnover_rate is not None
 
-
+    capital_flow: Optional[Dict] = field(default_factory=dict)
+    chip_distribution: Optional[Dict] = field(default_factory=dict)
 @dataclass
 class ChipDistribution:
     """
