@@ -163,7 +163,7 @@ class UnifiedRealtimeQuote:
             'source': self.source.value,
         }
         # 只添加非 None 的字段
-        optional_fields = [
+optional_fields = [
     'fetched_at', 'provider_timestamp', 'is_stale', 'stale_seconds',
     'fallback_from',
     'price', 'change_pct', 'change_amount', 'volume', 'amount',
@@ -172,8 +172,8 @@ class UnifiedRealtimeQuote:
     'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
     'change_60d', 'high_52w', 'low_52w',
     'capital_flow',
-    'chip_distribution']
-        ]
+    'chip_distribution'
+]
         for f in optional_fields:
             val = getattr(self, f, None)
             if val is not None:
