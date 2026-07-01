@@ -1602,61 +1602,6 @@ class AkshareFetcher(BaseFetcher):
         # ETF/指数没有筹码分布数据
         if _is_etf_code(stock_code):
             logger.debug(f"[API跳过] {stock_code} 是 ETF/指数，无筹码分布数据")
-    def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
-        """
-        获取筹码分布数据
-        数据来源: ak.stock_cyq_em()
-        包含: 获利比例、平均成本、筹码集中度
-        注意: ETF/指数没有筹码分布数据，会直接返回 None
-        """
-       # 美股没有筹码分布数据 (Akshare 不支持)
-       if _is_us_code(stock_code):
-        logger.debug(f"[API跳过] {stock_code} 是美股，无筹码分布数据")
-        return None
-       # 港股没有筹码分布数据 (stock_cyq_em 是 A 股专属接口)
-       if _is_hk_code(stock_code):
-        logger.debug(f"[API跳过] {stock_code} 是港股，无筹码分布数据")
-        return None
-       # ETF/指数没有筹码分布数据
-       if _is_etf_code(stock_code):
-        logger.debug(f"[API跳过] {stock_code} 是ETF/指数，无筹码分布数据")
-        return None
-
-       # ========== 新增AK免费筹码接口逻辑 ==========
-       try:
-        chip_df = ak.stock_cyq_em(symbol=stock_code)
-        if chip_df.empty:
-            logger.warning(f"{stock_code} 筹码接口返回空数据")
-            return None
-        
-        # 提取核心指标
-        avg_cost = float(chip_df.loc[chip_df["指标名称"] == "平均成本", "指标值"].iloc[0])
-        profit_ratio = float(chip_df.loc[chip_df["指标名称"] == "获利比例", "指标值"].iloc[0])
-        
-        chip_90_low = float(chip_df.loc[chip_df["指标名称"] == "90%筹码最低", "指标值"].iloc[0])
-        chip_90_high = float(chip_df.loc[chip_df["指标名称"] == "90%筹码最高", "指标值"].iloc[0])
-        chip_90_conc = float(chip_df.loc[chip_df["指标名称"] == "90%筹码集中度", "指标值"].iloc[0])
-        
-        chip_70_low = float(chip_df.loc[chip_df["指标名称"] == "70%筹码最低", "指标值"].iloc[0])
-        chip_70_high = float(chip_df.loc[chip_df["指标名称"] == "70%筹码最高", "指标值"].iloc[0])
-        chip_70_conc = float(chip_df.loc[chip_df["指标名称"] == "70%筹码集中度", "指标值"].iloc[0])
-
-        # 实例化你项目里的ChipDistribution对象返回
-        chip_data = ChipDistribution(
-            avg_cost=avg_cost,
-            profit_rate=profit_ratio,
-            chip_90_low=chip_90_low,
-            chip_90_high=chip_90_high,
-            chip_90_concentration=chip_90_conc,
-            chip_70_low=chip_70_low,
-            chip_70_high=chip_70_high,
-            chip_70_concentration=chip_70_conc
-        )
-        logger.info(f"[{stock_code}] 筹码数据拉取成功，平均成本：{avg_cost:.2f}")
-        return chip_data
-    except Exception as e:
-        logger.error(f"[{stock_code}] 获取筹码分布失败：{str(e)}")
-        return None
             return None
         
         try:
