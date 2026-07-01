@@ -477,33 +477,47 @@ class AkshareFetcher(BaseFetcher):
         else:
             return self._fetch_stock_data(stock_code, start_date, end_date)
     
-    def fetch_stock_data(self, stock_code: str, start_date: str, end_date: str, data_type: str = "kline") -> pd.DataFrame:
+    def _fetch_stock_chip_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
     """
-    统一获取akshare数据入口
-    :param data_type: kline=日线行情 / chip=筹码分布
+    获取A股每日筹码分布数据（东方财富免费接口 ak.stock_cyq_em）
+    :param stock_code: 带市场前缀代码 sh600000 / sz000001
+    :param start_date: 起始日期 yyyy-MM-dd
+    :param end_date: 结束日期 yyyy-MM-dd
+    :return: 筹码DataFrame，空/失败返回空df
     """
-    source_name = "Akshare-东方财富"
-    last_error = None
+    import akshare as ak
+    import time as _time
+    import pandas as pd
+
+    # 复用现有防封禁策略
+    self._set_random_user_agent()
+    self._enforce_rate_limit()
+
+    logger.info(f"[API调用] ak.stock_cyq_em(symbol={stock_code}) 获取筹码数据")
     try:
-        logger.info(f"[数据源] 尝试使用 {source_name} 获取 {stock_code} {data_type} ...")
-        # 根据类型分发接口
-        if data_type == "kline":
-            df = self._fetch_stock_data_em(stock_code, start_date, end_date)
-        elif data_type == "chip":
-            df = self._fetch_stock_chip_em(stock_code, start_date, end_date)
-        else:
-            raise ValueError(f"不支持的数据类型: {data_type}, 仅支持 kline / chip")
+        api_start = _time.time()
+        # 获取全量筹码历史
+        df_chip = ak.stock_cyq_em(symbol=stock_code)
+        api_cost = round(_time.time() - api_start, 2)
+        logger.info(f"[筹码接口] {stock_code} 原始数据获取耗时 {api_cost}s，共{len(df_chip)}条")
 
-        if df is not None and not df.empty:
-            logger.info(f"[数据源] {source_name} {data_type} 获取成功")
-            return df
-        last_error = Exception("接口返回空数据")
+        if df_chip is None or df_chip.empty:
+            logger.warning(f"[筹码接口] {stock_code} 返回筹码数据为空")
+            return pd.DataFrame()
+
+        # 日期过滤：筛选 [start_date, end_date] 区间
+        df_chip["date"] = pd.to_datetime(df_chip["date"])
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+        df_filter = df_chip[(df_chip["date"] >= start_dt) & (df_chip["date"] <= end_dt)].copy()
+        df_filter["date"] = df_filter["date"].dt.strftime("%Y-%m-%d")
+
+        logger.info(f"[筹码接口] {stock_code} 过滤后区间[{start_date}~{end_date}] 筹码数据 {len(df_filter)} 条")
+        return df_filter
+
     except Exception as e:
-        last_error = e
-        logger.warning(f"[数据源] {source_name} {data_type} 获取失败: {e}")
-
-    # 所有渠道失败抛出异常
-    raise DataFetchError(f"Akshare 所有渠道获取{data_type}失败: {last_error}")
+        logger.error(f"[筹码接口] {stock_code} 获取筹码失败: {str(e)}", exc_info=True)
+        return pd.DataFrame()
 
     def _fetch_stock_data_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
