@@ -476,18 +476,18 @@ class AkshareFetcher(BaseFetcher):
             return self._fetch_etf_data(stock_code, start_date, end_date)
         else:
             return self._fetch_stock_data(stock_code, start_date, end_date)
-    
-  def _fetch_stock_chip_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-      """
+
+def _fetch_stock_chip_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """
     获取A股每日筹码分布数据（东方财富免费接口 ak.stock_cyq_em）
     :param stock_code: 带市场前缀代码 sh600000 / sz000001
     :param start_date: 起始日期 yyyy-MM-dd
     :param end_date: 结束日期 yyyy-MM-dd
     :return: 筹码DataFrame，空/失败返回空df
     """
-      import akshare as ak
-      import time as _time
-      import pandas as pd
+    import akshare as ak
+    import time as _time
+    import pandas as pd
 
     # 复用现有防封禁策略
     self._set_random_user_agent()
