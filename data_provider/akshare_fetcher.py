@@ -477,17 +477,17 @@ class AkshareFetcher(BaseFetcher):
         else:
             return self._fetch_stock_data(stock_code, start_date, end_date)
     
-    def _fetch_stock_chip_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """
+  def _fetch_stock_chip_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+      """
     获取A股每日筹码分布数据（东方财富免费接口 ak.stock_cyq_em）
     :param stock_code: 带市场前缀代码 sh600000 / sz000001
     :param start_date: 起始日期 yyyy-MM-dd
     :param end_date: 结束日期 yyyy-MM-dd
     :return: 筹码DataFrame，空/失败返回空df
     """
-    import akshare as ak
-    import time as _time
-    import pandas as pd
+      import akshare as ak
+      import time as _time
+      import pandas as pd
 
     # 复用现有防封禁策略
     self._set_random_user_agent()
@@ -518,49 +518,6 @@ class AkshareFetcher(BaseFetcher):
     except Exception as e:
         logger.error(f"[筹码接口] {stock_code} 获取筹码失败: {str(e)}", exc_info=True)
         return pd.DataFrame()
-
-    def _fetch_stock_data_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        获取普通 A 股历史数据 (东方财富)
-        数据来源：ak.stock_zh_a_hist()
-        """
-        import akshare as ak
-
-        # 防封禁策略 1: 随机 User-Agent
-        self._set_random_user_agent()
-
-        # 防封禁策略 2: 强制休眠
-        self._enforce_rate_limit()
-
-        logger.info(f"[API调用] ak.stock_zh_a_hist(symbol={stock_code}, ...)")
-
-        try:
-            import time as _time
-            api_start = _time.time()
-
-            df = ak.stock_zh_a_hist(
-                symbol=stock_code,
-                period="daily",
-                start_date=start_date.replace('-', ''),
-                end_date=end_date.replace('-', ''),
-                adjust="qfq"
-            )
-
-            api_elapsed = _time.time() - api_start
-
-            if df is not None and not df.empty:
-                logger.info(f"[API返回] ak.stock_zh_a_hist 成功: {len(df)} 行, 耗时 {api_elapsed:.2f}s")
-                return df
-            else:
-                logger.warning(f"[API返回] ak.stock_zh_a_hist 返回空数据")
-                return pd.DataFrame()
-
-        except Exception as e:
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ['banned', 'blocked', '频率', 'rate', '限制']):
-                raise RateLimitError(f"Akshare(EM) 可能被限流: {e}") from e
-            raise e
-
     def _fetch_stock_data_sina(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
         获取普通 A 股历史数据 (新浪财经)
@@ -610,16 +567,16 @@ class AkshareFetcher(BaseFetcher):
         except Exception as e:
             raise e
     def _fetch_stock_chip_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """
+        """
     获取A股每日筹码分布数据（东方财富免费接口 ak.stock_cyq_em）
     :param stock_code: 带市场前缀代码 sh600000 / sz000001
     :param start_date: 起始日期 yyyy-MM-dd
     :param end_date: 结束日期 yyyy-MM-dd
     :return: 筹码DataFrame，空/失败返回空df
     """
-    import akshare as ak
-    import time as _time
-    import pandas as pd
+        import akshare as ak
+        import time as _time
+        import pandas as pd
 
     # 复用现有防封禁策略
     self._set_random_user_agent()
