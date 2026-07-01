@@ -1593,7 +1593,7 @@ class AkshareFetcher(BaseFetcher):
         """
         获取筹码分布数据
         
-        数据来源：东方财富原生接口（主） / ak.stock_cyq_em()（兜底）
+        数据来源：ak.stock_cyq_em()（东方财富数据源，算法计算）
         包含：获利比例、平均成本、筹码集中度
         
         注意：ETF/指数没有筹码分布数据，会直接返回 None
@@ -1604,15 +1604,15 @@ class AkshareFetcher(BaseFetcher):
         Returns:
             ChipDistribution 对象（最新一天的数据），获取失败返回 None
         """
+        import akshare as ak
         import requests
-        import json
 
-        # 美股没有筹码分布数据
+        # 美股没有筹码分布数据（Akshare 不支持）
         if _is_us_code(stock_code):
             logger.debug(f"[API跳过] {stock_code} 是美股，无筹码分布数据")
             return None
 
-        # 港股没有筹码分布数据（筹码接口是 A 股专属）
+        # 港股没有筹码分布数据（stock_cyq_em 是 A 股专属接口）
         if _is_hk_code(stock_code):
             logger.debug(f"[API跳过] {stock_code} 是港股，无筹码分布数据")
             return None
@@ -1622,116 +1622,56 @@ class AkshareFetcher(BaseFetcher):
             logger.debug(f"[API跳过] {stock_code} 是 ETF/指数，无筹码分布数据")
             return None
         
-        # 提取纯数字代码
+        # 统一代码格式，去除前缀
         pure_code = str(stock_code).strip()
         if pure_code.startswith(("sh", "sz", "bj")):
             pure_code = pure_code[2:]
-        
-        last_error = None
-        max_retry = 3
 
-        # ========== 主渠道：原生请求东方财富数据中心接口（带完整浏览器特征） ==========
+        max_retry = 3
+        last_error = None
+
         for retry_num in range(1, max_retry + 1):
             try:
-                self._enforce_rate_limit()
-                time.sleep(random.uniform(3.0, 5.0))
-
+                # ========== 强化反爬配置 ==========
+                # 全局注入浏览器请求头，让akshare底层请求继承
                 random_ua = random.choice(USER_AGENTS)
-                headers = {
+                chip_headers = {
                     "User-Agent": random_ua,
-                    "Referer": "https://data.eastmoney.com/",
-                    "Accept": "application/json, text/javascript, */*; q=0.01",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                    "Referer": "https://quote.eastmoney.com/",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9",
                     "Accept-Encoding": "gzip, deflate, br",
                     "Connection": "keep-alive",
-                    "X-Requested-With": "XMLHttpRequest",
                 }
+                _origin_default_headers = requests.utils.default_headers
+                requests.utils.default_headers = lambda: requests.structures.CaseInsensitiveDict(chip_headers)
 
-                api_url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-                params = {
-                    "reportName": "RPT_CYQ",
-                    "columns": "ALL",
-                    "filter": f'(SECURITY_CODE="{pure_code}")',
-                    "pageSize": "60",
-                    "sortColumns": "TRADE_DATE",
-                    "sortTypes": "-1",
-                    "source": "WEB",
-                    "client": "WEB",
-                    "_": str(int(time.time() * 1000)),
-                }
-
-                logger.info(f"[API调用] 东方财富原生接口获取 {stock_code} 筹码分布... 第{retry_num}次尝试")
+                # 筹码接口风控更严，加长休眠适配云环境
+                self._enforce_rate_limit()
+                time.sleep(random.uniform(3.0, 6.0))
+                
+                logger.info(f"[API调用] ak.stock_cyq_em(symbol={stock_code}) 获取筹码分布... 第{retry_num}次尝试")
                 import time as _time
                 api_start = _time.time()
-
-                # 使用会话保持，模拟真实浏览器访问
-                with requests.Session() as session:
-                    # 先访问首页种下cookie
-                    session.get("https://data.eastmoney.com/", headers=headers, timeout=10)
-                    resp = session.get(api_url, params=params, headers=headers, timeout=20)
                 
-                resp.raise_for_status()
-                data = resp.json()
-
+                df = ak.stock_cyq_em(symbol=pure_code)
+                
                 api_elapsed = _time.time() - api_start
 
-                if not data.get("success") or not data.get("result") or not data["result"].get("data"):
-                    logger.warning(f"[API返回] 东方财富原生接口返回空数据, 耗时 {api_elapsed:.2f}s")
-                    break
-
-                chip_list = data["result"]["data"]
-                # 按日期倒序，取最新一天
-                latest = chip_list[0]
-                logger.info(f"[API返回] 东方财富原生接口成功: 返回 {len(chip_list)} 天数据, 耗时 {api_elapsed:.2f}s")
-
-                # 字段映射到统一结构
-                chip = ChipDistribution(
-                    code=stock_code,
-                    date=str(latest.get("TRADE_DATE", "")),
-                    profit_ratio=safe_float(latest.get("PROFIT_RATIO")),
-                    avg_cost=safe_float(latest.get("AVG_COST")),
-                    cost_90_low=safe_float(latest.get("COST_90_LOW")),
-                    cost_90_high=safe_float(latest.get("COST_90_HIGH")),
-                    concentration_90=safe_float(latest.get("CONCENTRATION_90")),
-                    cost_70_low=safe_float(latest.get("COST_70_LOW")),
-                    cost_70_high=safe_float(latest.get("COST_70_HIGH")),
-                    concentration_70=safe_float(latest.get("CONCENTRATION_70")),
-                )
-
-                # 百分比字段归一（如果返回的是百分数值）
-                if chip.profit_ratio is not None and chip.profit_ratio > 1:
-                    chip.profit_ratio = chip.profit_ratio / 100
-                if chip.concentration_90 is not None and chip.concentration_90 > 1:
-                    chip.concentration_90 = chip.concentration_90 / 100
-                if chip.concentration_70 is not None and chip.concentration_70 > 1:
-                    chip.concentration_70 = chip.concentration_70 / 100
-
-                logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
-                           f"平均成本={chip.avg_cost}, 90%集中度={chip.concentration_90:.2%}, "
-                           f"70%集中度={chip.concentration_70:.2%}")
-                return chip
-
-            except Exception as e:
-                last_error = e
-                error_msg = str(e).lower()
-                logger.warning(f"[API错误] 第{retry_num}次原生接口获取 {stock_code} 筹码失败: {e}")
-
-                # 仅网络类错误重试，其他直接退出
-                if "connection" not in error_msg and "timeout" not in error_msg and "remote" not in error_msg:
-                    break
-                if retry_num < max_retry:
-                    time.sleep(2 ** retry_num)
-
-        # ========== 兜底渠道：akshare 东方财富接口 ==========
-        try:
-            import akshare as ak
-            logger.info(f"[API调用] akshare 兜底获取 {stock_code} 筹码分布...")
-            self._enforce_rate_limit()
-            time.sleep(random.uniform(2.0, 3.5))
-
-            df = ak.stock_cyq_em(symbol=pure_code)
-            if not df.empty:
+                # 恢复原始请求头，不影响其他接口
+                requests.utils.default_headers = _origin_default_headers
+                
+                if df.empty:
+                    logger.warning(f"[API返回] ak.stock_cyq_em 返回空数据, 耗时 {api_elapsed:.2f}s")
+                    return None
+                
+                logger.info(f"[API返回] ak.stock_cyq_em 成功: 返回 {len(df)} 天数据, 耗时 {api_elapsed:.2f}s")
+                logger.debug(f"[API返回] 筹码数据列名: {list(df.columns)}")
+                
+                # 取最新一天的数据
                 latest = df.iloc[-1]
+                
+                # 使用 realtime_types.py 中的统一转换函数
                 chip = ChipDistribution(
                     code=stock_code,
                     date=str(latest.get('日期', '')),
@@ -1744,14 +1684,33 @@ class AkshareFetcher(BaseFetcher):
                     cost_70_high=safe_float(latest.get('70成本-高')),
                     concentration_70=safe_float(latest.get('70集中度')),
                 )
-                logger.info(f"[筹码分布] akshare 兜底获取 {stock_code} 成功")
+                
+                logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
+                           f"平均成本={chip.avg_cost}, 90%集中度={chip.concentration_90:.2%}, "
+                           f"70%集中度={chip.concentration_70:.2%}")
                 return chip
-        except Exception as e:
-            last_error = e
-            logger.warning(f"[API错误] akshare 兜底获取 {stock_code} 筹码也失败: {e}")
+                
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                logger.warning(f"[API错误] 第{retry_num}次获取 {stock_code} 筹码失败: {e}")
 
-        # 所有数据源均失败，降级返回 None，不中断主分析流程
-        logger.error(f"[API错误] 获取 {stock_code} 筹码分布所有数据源均失败: {last_error}")
+                # 恢复原始请求头
+                try:
+                    requests.utils.default_headers = _origin_default_headers
+                except:
+                    pass
+
+                # 仅连接断开/超时类错误重试，其他错误直接退出
+                if "connection" not in error_msg and "remote" not in error_msg and "timeout" not in error_msg:
+                    break
+                
+                # 重试前指数退避休眠
+                if retry_num < max_retry:
+                    time.sleep(2 ** retry_num)
+        
+        # 所有重试均失败，降级返回None，不中断主分析流程
+        logger.error(f"[API错误] 获取 {stock_code} 筹码分布最终失败: {last_error}")
         return None
     def get_market_stats(self) -> Optional[Dict[str, Any]]:
         """
