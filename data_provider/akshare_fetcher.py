@@ -1605,6 +1605,7 @@ class AkshareFetcher(BaseFetcher):
             ChipDistribution 对象（最新一天的数据），获取失败返回 None
         """
         import akshare as ak
+        import requests
 
         # 美股没有筹码分布数据（Akshare 不支持）
         if _is_us_code(stock_code):
@@ -1621,51 +1622,87 @@ class AkshareFetcher(BaseFetcher):
             logger.debug(f"[API跳过] {stock_code} 是 ETF/指数，无筹码分布数据")
             return None
         
-        try:
-            # 防封禁策略
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-            
-            logger.info(f"[API调用] ak.stock_cyq_em(symbol={stock_code}) 获取筹码分布...")
-            import time as _time
-            api_start = _time.time()
-            
-            df = ak.stock_cyq_em(symbol=stock_code)
-            
-            api_elapsed = _time.time() - api_start
-            
-            if df.empty:
-                logger.warning(f"[API返回] ak.stock_cyq_em 返回空数据, 耗时 {api_elapsed:.2f}s")
-                return None
-            
-            logger.info(f"[API返回] ak.stock_cyq_em 成功: 返回 {len(df)} 天数据, 耗时 {api_elapsed:.2f}s")
-            logger.debug(f"[API返回] 筹码数据列名: {list(df.columns)}")
-            
-            # 取最新一天的数据
-            latest = df.iloc[-1]
-            
-            # 使用 realtime_types.py 中的统一转换函数
-            chip = ChipDistribution(
-                code=stock_code,
-                date=str(latest.get('日期', '')),
-                profit_ratio=safe_float(latest.get('获利比例')),
-                avg_cost=safe_float(latest.get('平均成本')),
-                cost_90_low=safe_float(latest.get('90成本-低')),
-                cost_90_high=safe_float(latest.get('90成本-高')),
-                concentration_90=safe_float(latest.get('90集中度')),
-                cost_70_low=safe_float(latest.get('70成本-低')),
-                cost_70_high=safe_float(latest.get('70成本-高')),
-                concentration_70=safe_float(latest.get('70集中度')),
-            )
-            
-            logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
-                       f"平均成本={chip.avg_cost}, 90%集中度={chip.concentration_90:.2%}, "
-                       f"70%集中度={chip.concentration_70:.2%}")
-            return chip
-            
-        except Exception as e:
-            logger.error(f"[API错误] 获取 {stock_code} 筹码分布失败: {e}")
-            return None
+        # 统一代码格式，避免数字传参异常
+        stock_code = str(stock_code).strip()
+        max_retry = 3
+        last_error = None
+
+        for retry_num in range(1, max_retry + 1):
+            try:
+                # ========== 真正生效的反爬配置 ==========
+                # 注入随机UA + 东方财富Referer，替换原有的空UA设置
+                random_ua = random.choice(USER_AGENTS)
+                chip_headers = {
+                    "User-Agent": random_ua,
+                    "Referer": "https://quote.eastmoney.com/",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    "Connection": "keep-alive",
+                }
+                # 临时覆盖requests默认请求头，让akshare调用时继承生效
+                _origin_default_headers = requests.utils.default_headers
+                requests.utils.default_headers = lambda: requests.structures.CaseInsensitiveDict(chip_headers)
+
+                # 筹码接口风控更严，在原有限流基础上追加随机休眠
+                self._enforce_rate_limit()
+                time.sleep(random.uniform(1.0, 2.5))
+                
+                logger.info(f"[API调用] ak.stock_cyq_em(symbol={stock_code}) 获取筹码分布... 第{retry_num}次尝试")
+                import time as _time
+                api_start = _time.time()
+                
+                df = ak.stock_cyq_em(symbol=stock_code)
+                
+                api_elapsed = _time.time() - api_start
+
+                # 恢复原始请求头，不影响其他接口调用
+                requests.utils.default_headers = _origin_default_headers
+                
+                if df.empty:
+                    logger.warning(f"[API返回] ak.stock_cyq_em 返回空数据, 耗时 {api_elapsed:.2f}s")
+                    return None
+                
+                logger.info(f"[API返回] ak.stock_cyq_em 成功: 返回 {len(df)} 天数据, 耗时 {api_elapsed:.2f}s")
+                logger.debug(f"[API返回] 筹码数据列名: {list(df.columns)}")
+                
+                # 取最新一天的数据
+                latest = df.iloc[-1]
+                
+                # 使用 realtime_types.py 中的统一转换函数
+                chip = ChipDistribution(
+                    code=stock_code,
+                    date=str(latest.get('日期', '')),
+                    profit_ratio=safe_float(latest.get('获利比例')),
+                    avg_cost=safe_float(latest.get('平均成本')),
+                    cost_90_low=safe_float(latest.get('90成本-低')),
+                    cost_90_high=safe_float(latest.get('90成本-高')),
+                    concentration_90=safe_float(latest.get('90集中度')),
+                    cost_70_low=safe_float(latest.get('70成本-低')),
+                    cost_70_high=safe_float(latest.get('70成本-高')),
+                    concentration_70=safe_float(latest.get('70集中度')),
+                )
+                
+                logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
+                           f"平均成本={chip.avg_cost}, 90%集中度={chip.concentration_90:.2%}, "
+                           f"70%集中度={chip.concentration_70:.2%}")
+                return chip
+                
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                logger.warning(f"[API错误] 第{retry_num}次获取 {stock_code} 筹码失败: {e}")
+
+                # 仅连接断开/超时类错误重试，其他错误直接退出
+                if "connection" not in error_msg and "remote" not in error_msg and "timeout" not in error_msg:
+                    break
+                
+                # 重试前指数退避休眠
+                if retry_num < max_retry:
+                    time.sleep(2 ** retry_num)
+        
+        # 所有重试均失败
+        logger.error(f"[API错误] 获取 {stock_code} 筹码分布最终失败: {last_error}")
+        return None
     
     def get_enhanced_data(self, stock_code: str, days: int = 60) -> Dict[str, Any]:
         """
