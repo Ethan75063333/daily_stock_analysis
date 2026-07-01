@@ -477,7 +477,7 @@ class AkshareFetcher(BaseFetcher):
         else:
             return self._fetch_stock_data(stock_code, start_date, end_date)
     
-    def _fetch_stock_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def fetch_stock_data(self, stock_code: str, start_date: str, end_date: str, load_chip: bool = False) -> pd.DataFrame:
         """
         获取普通 A 股历史数据
 
@@ -485,6 +485,8 @@ class AkshareFetcher(BaseFetcher):
         1. 优先尝试东方财富接口 (ak.stock_zh_a_hist)
         2. 失败后尝试新浪财经接口 (ak.stock_zh_a_daily)
         3. 最后尝试腾讯财经接口 (ak.stock_zh_a_hist_tx)
+        
+        :param load_chip: 是否同步加载当日筹码数据并合并进K线DataFrame，默认False
         """
         # 尝试列表
         methods = [
@@ -501,6 +503,21 @@ class AkshareFetcher(BaseFetcher):
                 df = fetch_method(stock_code, start_date, end_date)
 
                 if df is not None and not df.empty:
+                    # 同步合并筹码数据
+                    if load_chip:
+                        chip_info = self.get_chip_distribution(stock_code)
+                        if chip_info is not None:
+                            df["平均成本"] = chip_info.avg_cost
+                            df["获利比例"] = chip_info.profit_ratio
+                            df["90%筹码低位"] = chip_info.cost_90_low
+                            df["90%筹码高位"] = chip_info.cost_90_high
+                            df["90%筹码集中度"] = chip_info.concentration_90
+                            df["70%筹码低位"] = chip_info.cost_70_low
+                            df["70%筹码高位"] = chip_info.cost_70_high
+                            df["70%筹码集中度"] = chip_info.concentration_70
+                            logger.info(f"[数据源] {source_name} 筹码数据合并成功")
+                        else:
+                            logger.warning(f"[数据源] {source_name} 未获取到有效筹码数据")
                     logger.info(f"[数据源] {source_name} 获取成功")
                     return df
             except Exception as e:
