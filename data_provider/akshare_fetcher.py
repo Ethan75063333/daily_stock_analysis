@@ -477,39 +477,33 @@ class AkshareFetcher(BaseFetcher):
         else:
             return self._fetch_stock_data(stock_code, start_date, end_date)
     
-    def _fetch_stock_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        获取普通 A 股历史数据
+    def fetch_stock_data(self, stock_code: str, start_date: str, end_date: str, data_type: str = "kline") -> pd.DataFrame:
+    """
+    统一获取akshare数据入口
+    :param data_type: kline=日线行情 / chip=筹码分布
+    """
+    source_name = "Akshare-东方财富"
+    last_error = None
+    try:
+        logger.info(f"[数据源] 尝试使用 {source_name} 获取 {stock_code} {data_type} ...")
+        # 根据类型分发接口
+        if data_type == "kline":
+            df = self._fetch_stock_data_em(stock_code, start_date, end_date)
+        elif data_type == "chip":
+            df = self._fetch_stock_chip_em(stock_code, start_date, end_date)
+        else:
+            raise ValueError(f"不支持的数据类型: {data_type}, 仅支持 kline / chip")
 
-        策略：
-        1. 优先尝试东方财富接口 (ak.stock_zh_a_hist)
-        2. 失败后尝试新浪财经接口 (ak.stock_zh_a_daily)
-        3. 最后尝试腾讯财经接口 (ak.stock_zh_a_hist_tx)
-        """
-        # 尝试列表
-        methods = [
-            (self._fetch_stock_data_em, "东方财富"),
-            (self._fetch_stock_data_sina, "新浪财经"),
-            (self._fetch_stock_data_tx, "腾讯财经"),
-        ]
+        if df is not None and not df.empty:
+            logger.info(f"[数据源] {source_name} {data_type} 获取成功")
+            return df
+        last_error = Exception("接口返回空数据")
+    except Exception as e:
+        last_error = e
+        logger.warning(f"[数据源] {source_name} {data_type} 获取失败: {e}")
 
-        last_error = None
-
-        for fetch_method, source_name in methods:
-            try:
-                logger.info(f"[数据源] 尝试使用 {source_name} 获取 {stock_code}...")
-                df = fetch_method(stock_code, start_date, end_date)
-
-                if df is not None and not df.empty:
-                    logger.info(f"[数据源] {source_name} 获取成功")
-                    return df
-            except Exception as e:
-                last_error = e
-                logger.warning(f"[数据源] {source_name} 获取失败: {e}")
-                # 继续尝试下一个
-
-        # 所有都失败
-        raise DataFetchError(f"Akshare 所有渠道获取失败: {last_error}")
+    # 所有渠道失败抛出异常
+    raise DataFetchError(f"Akshare 所有渠道获取{data_type}失败: {last_error}")
 
     def _fetch_stock_data_em(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
