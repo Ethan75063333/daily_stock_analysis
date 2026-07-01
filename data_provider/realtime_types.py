@@ -171,8 +171,6 @@ class UnifiedRealtimeQuote:
     'open_price', 'high', 'low', 'pre_close',
     'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
     'change_60d', 'high_52w', 'low_52w',
-    'capital_flow',
-    'chip_distribution'
        ]
         for f in optional_fields:
             val = getattr(self, f, None)
