@@ -1593,7 +1593,7 @@ class AkshareFetcher(BaseFetcher):
         """
         获取筹码分布数据
         
-        数据来源：东方财富官方数据接口（原生请求） / ak.stock_cyq_em() 双兜底
+        数据来源：东方财富行情原生接口 / ak.stock_cyq_em() 双兜底
         包含：获利比例、平均成本、筹码集中度
         
         注意：ETF/指数没有筹码分布数据，会直接返回 None
@@ -1605,9 +1605,8 @@ class AkshareFetcher(BaseFetcher):
             ChipDistribution 对象（最新一天的数据），获取失败返回 None
         """
         import requests
-        import json
 
-        # 美股没有筹码分布数据（Akshare 不支持）
+        # 美股没有筹码分布数据
         if _is_us_code(stock_code):
             logger.debug(f"[API跳过] {stock_code} 是美股，无筹码分布数据")
             return None
@@ -1622,39 +1621,46 @@ class AkshareFetcher(BaseFetcher):
             logger.debug(f"[API跳过] {stock_code} 是 ETF/指数，无筹码分布数据")
             return None
         
-        # 统一代码格式，去除前缀只保留纯数字
+        # 提取纯数字代码，并生成东方财富 secid（1=沪市，0=深市）
         pure_code = str(stock_code).strip()
         if pure_code.startswith(("sh", "sz", "bj")):
             pure_code = pure_code[2:]
-        
+        # 沪市：6/9开头；深市：0/3开头
+        if pure_code.startswith(("6", "9")):
+            secid = f"1.{pure_code}"
+        else:
+            secid = f"0.{pure_code}"
+
         last_error = None
         max_retry = 3
 
-        # ========== 方案1：原生请求东方财富官方接口（成功率最高） ==========
+        # ========== 方案1：东方财富行情页原生接口（成功率最高） ==========
         for retry_num in range(1, max_retry + 1):
             try:
                 self._enforce_rate_limit()
-                time.sleep(random.uniform(2.0, 4.0))
+                time.sleep(random.uniform(2.5, 4.5))
 
                 random_ua = random.choice(USER_AGENTS)
                 headers = {
                     "User-Agent": random_ua,
-                    "Referer": "https://quote.eastmoney.com/",
-                    "Accept": "application/json, text/javascript, */*; q=0.01",
-                    "Accept-Language": "zh-CN,zh;q=0.9",
+                    "Referer": f"https://quote.eastmoney.com/{secid}.html",
+                    "Accept": "*/*",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                     "Connection": "keep-alive",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
                 }
 
-                api_url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+                api_url = "https://push2his.eastmoney.com/api/qt/stock/cyq"
                 params = {
-                    "reportName": "RPT_CYQ",
-                    "columns": "ALL",
-                    "filter": f'(SECURITY_CODE="{pure_code}")',
-                    "pageSize": "60",
-                    "sortColumns": "TRADE_DATE",
-                    "sortTypes": "-1",
-                    "source": "WEB",
-                    "client": "WEB",
+                    "secid": secid,
+                    "ut": "fa5fd1943c7b386f17b5d852d6e29a1b",
+                    "fields1": "f1,f2,f3,f4,f5",
+                    "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+                    "klt": "101",
+                    "fqt": "0",
+                    "end": "20500101",
+                    "lmt": "60",
                     "_": str(int(time.time() * 1000)),
                 }
 
@@ -1662,33 +1668,37 @@ class AkshareFetcher(BaseFetcher):
                 import time as _time
                 api_start = _time.time()
 
-                resp = requests.get(api_url, params=params, headers=headers, timeout=15)
+                resp = requests.get(api_url, params=params, headers=headers, timeout=20)
                 resp.raise_for_status()
                 data = resp.json()
 
                 api_elapsed = _time.time() - api_start
 
-                if not data.get("success") or not data.get("result") or not data["result"].get("data"):
+                if not data.get("data") or not data["data"].get("cyq"):
                     logger.warning(f"[API返回] 东方财富原生接口返回空数据, 耗时 {api_elapsed:.2f}s")
                     break
 
-                chip_list = data["result"]["data"]
-                # 按日期倒序，取最新一天
-                latest = chip_list[0]
-                logger.info(f"[API返回] 东方财富原生接口成功: 返回 {len(chip_list)} 天数据, 耗时 {api_elapsed:.2f}s")
+                cyq_list = data["data"]["cyq"].split("|")
+                # 取最新一天（最后一条）
+                latest_fields = cyq_list[-1].split(",")
+                if len(latest_fields) < 8:
+                    logger.warning(f"[API返回] 东方财富原生接口字段不足")
+                    break
 
-                # 字段映射到统一结构
+                logger.info(f"[API返回] 东方财富原生接口成功: 返回 {len(cyq_list)} 天数据, 耗时 {api_elapsed:.2f}s")
+
+                # 字段映射：日期,获利比例,平均成本,90%低,90%高,70%低,70%高,集中度
                 chip = ChipDistribution(
                     code=stock_code,
-                    date=str(latest.get("TRADE_DATE", "")),
-                    profit_ratio=safe_float(latest.get("PROFIT_RATIO")),
-                    avg_cost=safe_float(latest.get("AVG_COST")),
-                    cost_90_low=safe_float(latest.get("COST_90_LOW")),
-                    cost_90_high=safe_float(latest.get("COST_90_HIGH")),
-                    concentration_90=safe_float(latest.get("CONCENTRATION_90")),
-                    cost_70_low=safe_float(latest.get("COST_70_LOW")),
-                    cost_70_high=safe_float(latest.get("COST_70_HIGH")),
-                    concentration_70=safe_float(latest.get("CONCENTRATION_70")),
+                    date=str(latest_fields[0]),
+                    profit_ratio=safe_float(latest_fields[1]),
+                    avg_cost=safe_float(latest_fields[2]),
+                    cost_90_low=safe_float(latest_fields[3]),
+                    cost_90_high=safe_float(latest_fields[4]),
+                    concentration_90=safe_float(latest_fields[7]),
+                    cost_70_low=safe_float(latest_fields[5]),
+                    cost_70_high=safe_float(latest_fields[6]),
+                    concentration_70=safe_float(latest_fields[7]) * 0.7,
                 )
 
                 logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
@@ -1712,7 +1722,7 @@ class AkshareFetcher(BaseFetcher):
             import akshare as ak
             logger.info(f"[API调用] akshare 兜底获取 {stock_code} 筹码分布...")
             self._enforce_rate_limit()
-            time.sleep(random.uniform(1.0, 2.0))
+            time.sleep(random.uniform(1.5, 3.0))
 
             df = ak.stock_cyq_em(symbol=pure_code)
             if not df.empty:
@@ -1738,72 +1748,6 @@ class AkshareFetcher(BaseFetcher):
         # 所有数据源均失败，降级返回 None，不中断主分析流程
         logger.error(f"[API错误] 获取 {stock_code} 筹码分布所有数据源均失败: {last_error}")
         return None
-    def get_main_indices(self, region: str = "cn") -> Optional[List[Dict[str, Any]]]:
-        """
-        获取主要指数实时行情 (新浪接口)，仅支持 A 股
-        """
-        if region != "cn":
-            return None
-        import akshare as ak
-
-        # 主要指数代码映射
-        indices_map = {
-            'sh000001': '上证指数',
-            'sz399001': '深证成指',
-            'sz399006': '创业板指',
-            'sh000688': '科创50',
-            'sh000016': '上证50',
-            'sh000300': '沪深300',
-        }
-
-        try:
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-
-            # 使用 akshare 获取指数行情（新浪财经接口）
-            df = ak.stock_zh_index_spot_sina()
-
-            results = []
-            if df is not None and not df.empty:
-                for code, name in indices_map.items():
-                    # 查找对应指数
-                    row = df[df['代码'] == code]
-                    if row.empty:
-                        # 尝试带前缀查找
-                        row = df[df['代码'].str.contains(code)]
-
-                    if not row.empty:
-                        row = row.iloc[0]
-                        current = safe_float(row.get('最新价', 0))
-                        prev_close = safe_float(row.get('昨收', 0))
-                        high = safe_float(row.get('最高', 0))
-                        low = safe_float(row.get('最低', 0))
-
-                        # 计算振幅
-                        amplitude = 0.0
-                        if prev_close > 0:
-                            amplitude = (high - low) / prev_close * 100
-
-                        results.append({
-                            'code': code,
-                            'name': name,
-                            'current': current,
-                            'change': safe_float(row.get('涨跌额', 0)),
-                            'change_pct': safe_float(row.get('涨跌幅', 0)),
-                            'open': safe_float(row.get('今开', 0)),
-                            'high': high,
-                            'low': low,
-                            'prev_close': prev_close,
-                            'volume': safe_float(row.get('成交量', 0)),
-                            'amount': safe_float(row.get('成交额', 0)),
-                            'amplitude': amplitude,
-                        })
-            return results
-
-        except Exception as e:
-            logger.error(f"[Akshare] 获取指数行情失败: {e}")
-            return None
-
     def get_market_stats(self) -> Optional[Dict[str, Any]]:
         """
         获取市场涨跌统计
