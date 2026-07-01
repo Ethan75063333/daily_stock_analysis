@@ -1593,7 +1593,7 @@ class AkshareFetcher(BaseFetcher):
         """
         获取筹码分布数据
         
-        数据来源：ak.stock_cyq_em()
+        数据来源：ak.stock_cyq_em() / ak.stock_cyq_ths() 双源兜底
         包含：获利比例、平均成本、筹码集中度
         
         注意：ETF/指数没有筹码分布数据，会直接返回 None
@@ -1606,6 +1606,7 @@ class AkshareFetcher(BaseFetcher):
         """
         import akshare as ak
         import requests
+        from requests.utils import default_headers as _origin_default_headers
 
         # 美股没有筹码分布数据（Akshare 不支持）
         if _is_us_code(stock_code):
@@ -1624,62 +1625,77 @@ class AkshareFetcher(BaseFetcher):
         
         # 统一代码格式，避免数字传参异常
         stock_code = str(stock_code).strip()
-        max_retry = 3
         last_error = None
 
-        for retry_num in range(1, max_retry + 1):
-            try:
-                # ========== 真正生效的反爬配置 ==========
-                # 注入随机UA + 东方财富Referer，替换原有的空UA设置
-                random_ua = random.choice(USER_AGENTS)
-                chip_headers = {
-                    "User-Agent": random_ua,
-                    "Referer": "https://quote.eastmoney.com/",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,zh;q=0.9",
-                    "Connection": "keep-alive",
-                }
-                # 临时覆盖requests默认请求头，让akshare调用时继承生效
-                _origin_default_headers = requests.utils.default_headers
-                requests.utils.default_headers = lambda: requests.structures.CaseInsensitiveDict(chip_headers)
+        # 双数据源依次尝试：东方财富 -> 同花顺，单源失败自动降级
+        fetch_methods = [
+            ("东方财富", lambda: ak.stock_cyq_em(symbol=stock_code), "https://quote.eastmoney.com/"),
+            ("同花顺", lambda: ak.stock_cyq_ths(symbol=stock_code), "https://www.10jqka.com.cn/"),
+        ]
 
-                # 筹码接口风控更严，在原有限流基础上追加随机休眠
+        for source_name, fetch_func, referer in fetch_methods:
+            try:
+                # ========== 真正生效的反爬请求头注入 ==========
+                # 重写 requests 默认头函数，确保 akshare 所有内部请求都携带浏览器特征
+                random_ua = random.choice(USER_AGENTS)
+                def _patched_default_headers():
+                    headers = _origin_default_headers()
+                    headers["User-Agent"] = random_ua
+                    headers["Referer"] = referer
+                    headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                    headers["Accept-Language"] = "zh-CN,zh;q=0.9"
+                    headers["Connection"] = "keep-alive"
+                    return headers
+                requests.utils.default_headers = _patched_default_headers
+
+                # 筹码接口风控更严，加长休眠适配CI服务器环境
                 self._enforce_rate_limit()
-                time.sleep(random.uniform(1.0, 2.5))
+                time.sleep(random.uniform(2.0, 4.0))
                 
-                logger.info(f"[API调用] ak.stock_cyq_em(symbol={stock_code}) 获取筹码分布... 第{retry_num}次尝试")
+                logger.info(f"[API调用] {source_name}筹码接口获取 {stock_code} 筹码分布...")
                 import time as _time
                 api_start = _time.time()
                 
-                df = ak.stock_cyq_em(symbol=stock_code)
+                df = fetch_func()
                 
                 api_elapsed = _time.time() - api_start
 
-                # 恢复原始请求头，不影响其他接口调用
+                # 恢复原始请求头，不污染其他接口
                 requests.utils.default_headers = _origin_default_headers
                 
                 if df.empty:
-                    logger.warning(f"[API返回] ak.stock_cyq_em 返回空数据, 耗时 {api_elapsed:.2f}s")
-                    return None
+                    logger.warning(f"[API返回] {source_name}筹码接口返回空数据, 耗时 {api_elapsed:.2f}s")
+                    continue
                 
-                logger.info(f"[API返回] ak.stock_cyq_em 成功: 返回 {len(df)} 天数据, 耗时 {api_elapsed:.2f}s")
+                logger.info(f"[API返回] {source_name}筹码接口成功: 返回 {len(df)} 天数据, 耗时 {api_elapsed:.2f}s")
                 logger.debug(f"[API返回] 筹码数据列名: {list(df.columns)}")
                 
                 # 取最新一天的数据
                 latest = df.iloc[-1]
                 
+                # 兼容双数据源的列名差异，统一映射
+                date_val = latest.get('日期', latest.get('date', ''))
+                profit_val = latest.get('获利比例', latest.get('profit_ratio'))
+                avg_cost_val = latest.get('平均成本', latest.get('avg_cost'))
+                cost90_low_val = latest.get('90成本-低', latest.get('90%低位'))
+                cost90_high_val = latest.get('90成本-高', latest.get('90%高位'))
+                concen90_val = latest.get('90集中度', latest.get('90%筹码集中度'))
+                cost70_low_val = latest.get('70成本-低', latest.get('70%低位'))
+                cost70_high_val = latest.get('70成本-高', latest.get('70%高位'))
+                concen70_val = latest.get('70集中度', latest.get('70%筹码集中度'))
+                
                 # 使用 realtime_types.py 中的统一转换函数
                 chip = ChipDistribution(
                     code=stock_code,
-                    date=str(latest.get('日期', '')),
-                    profit_ratio=safe_float(latest.get('获利比例')),
-                    avg_cost=safe_float(latest.get('平均成本')),
-                    cost_90_low=safe_float(latest.get('90成本-低')),
-                    cost_90_high=safe_float(latest.get('90成本-高')),
-                    concentration_90=safe_float(latest.get('90集中度')),
-                    cost_70_low=safe_float(latest.get('70成本-低')),
-                    cost_70_high=safe_float(latest.get('70成本-高')),
-                    concentration_70=safe_float(latest.get('70集中度')),
+                    date=str(date_val),
+                    profit_ratio=safe_float(profit_val),
+                    avg_cost=safe_float(avg_cost_val),
+                    cost_90_low=safe_float(cost90_low_val),
+                    cost_90_high=safe_float(cost90_high_val),
+                    concentration_90=safe_float(concen90_val),
+                    cost_70_low=safe_float(cost70_low_val),
+                    cost_70_high=safe_float(cost70_high_val),
+                    concentration_70=safe_float(concen70_val),
                 )
                 
                 logger.info(f"[筹码分布] {stock_code} 日期={chip.date}: 获利比例={chip.profit_ratio:.1%}, "
@@ -1689,53 +1705,18 @@ class AkshareFetcher(BaseFetcher):
                 
             except Exception as e:
                 last_error = e
-                error_msg = str(e).lower()
-                logger.warning(f"[API错误] 第{retry_num}次获取 {stock_code} 筹码失败: {e}")
-
-                # 仅连接断开/超时类错误重试，其他错误直接退出
-                if "connection" not in error_msg and "remote" not in error_msg and "timeout" not in error_msg:
-                    break
-                
-                # 重试前指数退避休眠
-                if retry_num < max_retry:
-                    time.sleep(2 ** retry_num)
+                logger.warning(f"[API错误] {source_name}筹码接口获取 {stock_code} 失败: {e}")
+                # 异常时也恢复原始请求头，避免污染后续其他接口
+                try:
+                    requests.utils.default_headers = _origin_default_headers
+                except:
+                    pass
+                # 切换数据源前追加休眠
+                time.sleep(random.uniform(1.5, 3.0))
         
-        # 所有重试均失败
-        logger.error(f"[API错误] 获取 {stock_code} 筹码分布最终失败: {last_error}")
+        # 所有数据源均失败，降级返回None，不中断主分析流程
+        logger.error(f"[API错误] 获取 {stock_code} 筹码分布所有数据源均失败: {last_error}")
         return None
-    
-    def get_enhanced_data(self, stock_code: str, days: int = 60) -> Dict[str, Any]:
-        """
-        获取增强数据（历史K线 + 实时行情 + 筹码分布）
-        
-        Args:
-            stock_code: 股票代码
-            days: 历史数据天数
-            
-        Returns:
-            包含所有数据的字典
-        """
-        result = {
-            'code': stock_code,
-            'daily_data': None,
-            'realtime_quote': None,
-            'chip_distribution': None,
-        }
-        
-        # 获取日线数据
-        try:
-            df = self.get_daily_data(stock_code, days=days)
-            result['daily_data'] = df
-        except Exception as e:
-            logger.error(f"获取 {stock_code} 日线数据失败: {e}")
-        
-        # 获取实时行情
-        result['realtime_quote'] = self.get_realtime_quote(stock_code)
-        
-        # 获取筹码分布
-        result['chip_distribution'] = self.get_chip_distribution(stock_code)
-        
-        return result
 
     def get_main_indices(self, region: str = "cn") -> Optional[List[Dict[str, Any]]]:
         """
