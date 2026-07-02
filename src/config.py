@@ -686,7 +686,12 @@ class Config:
     longbridge_access_token: Optional[str] = None
     longbridge_oauth_client_id: Optional[str] = None
     stock_index_remote_update_enabled: bool = True
-
+    
+    # === 搜索引擎配置 ===
+    searxng_instances: List[str] = field(default_factory=lambda: ["https://searx.be", "https://search.disroot.org", "https://searx.tiekoetter.com", "https://search.bus-hit.me"])
+    searxng_timeout: int = 8
+    searxng_default_results: int = 5
+    
     # === AlphaSift optional stock screening integration ===
     alphasift_enabled: bool = False
     alphasift_install_spec: str = DEFAULT_ALPHASIFT_INSTALL_SPEC
