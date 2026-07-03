@@ -1590,7 +1590,7 @@ class AkshareFetcher(BaseFetcher):
             return None
     
     def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
-        """AKShare免费筹码接口（云环境反爬强化版）"""
+        """AKShare筹码接口 云环境反爬终极优化版"""
         import akshare as ak
         import requests
         import random
@@ -1611,32 +1611,46 @@ class AkshareFetcher(BaseFetcher):
         ]
 
         for retry_idx in range(1, max_retry + 1):
-            origin_default_headers = requests.utils.default_headers
             session = requests.Session()
+            origin_request = requests.request
             try:
-                # 1. 随机浏览器身份
                 ua = random.choice(ua_pool)
-                browser_headers = {
+                # 完整浏览器指纹
+                session.headers.update({
                     "User-Agent": ua,
-                    "Referer": "https://quote.eastmoney.com/",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
                     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                     "Accept-Encoding": "gzip, deflate, br",
+                    "Referer": "https://quote.eastmoney.com/",
                     "Connection": "keep-alive",
                     "Upgrade-Insecure-Requests": "1",
-                }
-                requests.utils.default_headers = lambda: requests.structures.CaseInsensitiveDict(browser_headers)
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "same-origin",
+                    "Sec-Fetch-User": "?1",
+                    "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                })
 
-                # 2. 前置预热：先访问东方财富首页，预埋会话Cookie，模拟正常用户访问
-                if retry_idx == 1:
-                    try:
-                        session.get("https://quote.eastmoney.com/", headers=browser_headers, timeout=10)
-                    except Exception:
-                        pass
+                # 前置三步预热：访问首页→行情页→再调接口，完整模拟用户浏览路径
+                try:
+                    session.get("https://www.eastmoney.com/", timeout=15)
+                    time.sleep(random.uniform(1.0, 2.5))
+                    session.get(f"https://quote.eastmoney.com/sz{pure_code}.html", timeout=15)
+                    time.sleep(random.uniform(2.0, 4.0))
+                except Exception:
+                    pass
 
-                # 3. 加长随机休眠，降低请求密度
+                # 劫持全局requests使用当前会话，让akshare底层复用带Cookie的会话
+                def _patched_request(method, url, **kwargs):
+                    kwargs.setdefault("timeout", 20)
+                    return session.request(method, url, **kwargs)
+                requests.request = _patched_request
+
                 self._enforce_rate_limit()
-                time.sleep(random.uniform(6.0, 12.0))
+                # 长随机延时，降低请求密度
+                time.sleep(random.uniform(8.0, 15.0))
 
                 logger.info(f"[AK调用] 获取 {stock_code} 筹码分布 第{retry_idx}次尝试")
                 start_ts = time.time()
@@ -1667,90 +1681,20 @@ class AkshareFetcher(BaseFetcher):
                 err_msg = str(e).lower()
                 logger.warning(f"[AK异常] 第{retry_idx}次获取 {stock_code} 筹码失败: {e}")
 
-                # 仅连接断开、超时类风控错误重试
+                # 仅连接类风控错误重试，参数错误直接退出
                 if not any(key in err_msg for key in ["connection", "remote", "timeout", "timed out", "aborted"]):
                     break
 
-                # 长间隔随机重试，避开短时间风控窗口
+                # 长间隔冷却重试，给风控窗口留冷却时间
                 if retry_idx < max_retry:
-                    time.sleep(random.uniform(8.0, 15.0))
+                    time.sleep(random.uniform(15.0, 25.0))
 
             finally:
-                requests.utils.default_headers = origin_default_headers
+                # 恢复原生requests，不污染全局
+                requests.request = origin_request
                 session.close()
 
         logger.error(f"[AK最终失败] {stock_code} 筹码分布获取失败: {last_error}")
-        return None
-    def get_market_stats(self) -> Optional[Dict[str, Any]]:
-        """
-        获取市场涨跌统计
-
-        数据源优先级：
-        1. 东财接口 (ak.stock_zh_a_spot_em)
-        2. 新浪接口 (ak.stock_zh_a_spot)
-        """
-        import akshare as ak
-
-        # 优先东财接口
-        try:
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-
-            started_at = time.monotonic()
-            logger.info(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot_em action=request_start"
-            )
-            df = ak.stock_zh_a_spot_em()
-            elapsed = time.monotonic() - started_at
-            logger.info(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot_em action=request_complete elapsed=%.2fs",
-                elapsed,
-            )
-            if df is not None and not df.empty:
-                return self._calc_market_stats(df)
-            logger.warning(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot_em action=parse status=empty"
-            )
-        except Exception as e:
-            logger.warning(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot_em action=failed error=%s fallback=ak.stock_zh_a_spot",
-                e,
-            )
-
-        # 东财失败后，尝试新浪接口
-        try:
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-
-            started_at = time.monotonic()
-            logger.info(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot action=request_start"
-            )
-            df = ak.stock_zh_a_spot()
-            elapsed = time.monotonic() - started_at
-            logger.info(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot action=request_complete elapsed=%.2fs",
-                elapsed,
-            )
-            if df is not None and not df.empty:
-                return self._calc_market_stats(df)
-            logger.warning(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot action=parse status=empty"
-            )
-        except Exception as e:
-            logger.error(
-                "[MarketStats] component=market_stats provider=AkshareFetcher "
-                "api=ak.stock_zh_a_spot action=failed error=%s",
-                e,
-            )
-
         return None
 
     def _calc_market_stats(
