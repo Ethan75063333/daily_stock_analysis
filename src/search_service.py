@@ -1814,67 +1814,13 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _get_public_instances(cls) -> List[str]:
-        now = time.time()
-        with cls._public_instances_lock:
-            stale_urls: List[str] = []
-            if cls._public_instances_cache is None and cls._public_instances_stale_retry_after > now:
-                logger.debug(
-                    "[SearXNG] 公共实例冷启动刷新退避中，剩余 %.0fs",
-                    cls._public_instances_stale_retry_after - now,
-                )
-                return []
-            if cls._public_instances_cache is not None:
-                cached_at, cached_urls = cls._public_instances_cache
-                if now - cached_at < cls.PUBLIC_INSTANCES_CACHE_TTL_SECONDS:
-                    return list(cached_urls)
-                stale_urls = list(cached_urls)
-                if cls._public_instances_stale_retry_after > now:
-                    logger.debug(
-                        "[SearXNG] 公共实例刷新退避中，继续使用过期缓存，剩余 %.0fs",
-                        cls._public_instances_stale_retry_after - now,
-                    )
-                    return stale_urls
-
-            try:
-                response = requests.get(
-                    cls.PUBLIC_INSTANCES_URL,
-                    timeout=cls.PUBLIC_INSTANCES_TIMEOUT_SECONDS,
-                )
-                if response.status_code != 200:
-                    logger.warning(
-                        "[SearXNG] 拉取公共实例列表失败: HTTP %s",
-                        response.status_code,
-                    )
-                else:
-                    urls = cls._extract_public_instances(response.json())
-                    if urls:
-                        cls._public_instances_cache = (now, list(urls))
-                        cls._public_instances_stale_retry_after = 0.0
-                        logger.info("[SearXNG] 已刷新公共实例池，共 %s 个候选实例", len(urls))
-                        return list(urls)
-                    logger.warning("[SearXNG] searx.space 未返回可用公共实例，保留已有缓存")
-            except Exception as exc:
-                logger.warning("[SearXNG] 拉取公共实例列表失败: %s", exc)
-
-            if stale_urls:
-                cls._public_instances_stale_retry_after = (
-                    now + cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS
-                )
-                logger.warning(
-                    "[SearXNG] 公共实例刷新失败，继续使用过期缓存，共 %s 个候选实例；"
-                    "%.0fs 内不再刷新",
-                    len(stale_urls),
-                    cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS,
-                )
-                return stale_urls
-            cls._public_instances_stale_retry_after = (
-                now + cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS
-            )
-            logger.warning(
-                "[SearXNG] 公共实例冷启动刷新失败，%.0fs 内不再刷新",
-                cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS,
-            )
-            return []
+        """预筛选稳定公共实例，替代在线拉取，规避云环境限流"""
+        return [
+            "https://searx.be",
+            "https://search.disroot.org",
+            "https://searx.tiekoetter.com",
+            "https://search.bus-hit.me",
+        ]
 
     def _rotate_candidates(self, pool: List[str], *, max_attempts: int) -> List[str]:
         if not pool or max_attempts <= 0:
