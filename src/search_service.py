@@ -1814,12 +1814,12 @@ class SearXNGSearchProvider(BaseSearchProvider):
 
     @classmethod
     def _get_public_instances(cls) -> List[str]:
-        """筛选对云环境更友好的小众SearXNG实例"""
+        """精选低风控公共SearXNG实例，适配云环境"""
         return [
-            "https://search.sapti.me",
-            "https://searxng.site",
-            "https://search.ononoki.org",
-            "https://searx.techsaviours.org",
+            "https://searx.be",
+            "https://search.disroot.org",
+            "https://search.bus-hit.me",
+            "https://searx.tuxcloud.net",
         ]
 
     def _rotate_candidates(self, pool: List[str], *, max_attempts: int) -> List[str]:
