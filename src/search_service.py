@@ -1841,7 +1841,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
         try:
             logger.info("===== 使用CF Worker代理模式，不再直连searx.tuxcloud.net =====")
             import random, time
-            time.sleep(random.uniform(6, 10))
+            time.sleep(random.uniform(10, 15))
             # 使用Cloudflare Worker代理，不再拼接原始实例地址
             search_url = "https://searx-proxy.75063333.workers.dev/"
             logger.info(f"【SearXNG代理地址】{search_url}")
