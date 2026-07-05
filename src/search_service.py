@@ -1839,8 +1839,10 @@ class SearXNGSearchProvider(BaseSearchProvider):
     ) -> SearchResponse:
         """Execute one SearXNG search against a specific instance."""
         try:
-            base = base_url.rstrip("/")
-            search_url = base if base.endswith("/search") else base + "/search"
+            import random, time
+            time.sleep(random.uniform(2, 5))
+            # 使用Cloudflare Worker代理，不再拼接原始实例地址
+            search_url = "https://searx-proxy.75063333.workers.dev/"
 
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
