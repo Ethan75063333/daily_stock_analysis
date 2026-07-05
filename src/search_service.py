@@ -2272,17 +2272,17 @@ class SearchService:
             self._providers.append(MiniMaxSearchProvider(minimax_keys))
             logger.info(f"已配置 MiniMax 搜索，共 {len(minimax_keys)} 个 API Key")
 
-        # 6. SearXNG（自建实例优先；未配置时可自动发现公共实例）
-        searxng_provider = SearXNGSearchProvider(
-            searxng_base_urls,
-            use_public_instances=bool(searxng_public_instances_enabled and not searxng_base_urls),
-        )
-        if searxng_provider.is_available:
-            self._providers.append(searxng_provider)
-            if searxng_base_urls:
-                logger.info("已配置 SearXNG 搜索，共 %s 个自建实例", len(searxng_base_urls))
-            else:
-                logger.info("已启用 SearXNG 公共实例自动发现模式")
+        # # 6. SearXNG（自建实例优先；未配置时可自动发现公共实例）
+# searxng_provider = SearXNGSearchProvider(
+#     searxng_base_urls,
+#     use_public_instances=bool(searxng_public_instances_enabled and not searxng_base_urls),
+# )
+# if searxng_provider.is_available:
+#     self._providers.append(searxng_provider)
+#     if searxng_base_urls:
+#         logger.info("已配置 SearXNG 搜索，共 %s 个自建实例", len(searxng_base_urls))
+#     else:
+#         logger.info("已启用 SearXNG 公共实例自动发现模式")
 
         # 7. Anspire Search（实时智能搜索优化）
         if anspire_keys:
