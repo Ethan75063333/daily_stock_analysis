@@ -1839,10 +1839,12 @@ class SearXNGSearchProvider(BaseSearchProvider):
     ) -> SearchResponse:
         """Execute one SearXNG search against a specific instance."""
         try:
+            logger.info("===== 使用CF Worker代理模式，不再直连searx.tuxcloud.net =====")
             import random, time
-            time.sleep(random.uniform(2, 5))
+            time.sleep(random.uniform(6, 10))
             # 使用Cloudflare Worker代理，不再拼接原始实例地址
             search_url = "https://searx-proxy.75063333.workers.dev/"
+            logger.info(f"【SearXNG代理地址】{search_url}")
 
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
