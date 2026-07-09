@@ -1590,7 +1590,7 @@ class AkshareFetcher(BaseFetcher):
             return None
     
     def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
-        """筹码接口 东方财富原生直连 GitHub云环境版"""
+        """筹码接口 东方财富原生直连 GitHub云环境版【接口修正版】"""
         import requests
         import random
         import time
@@ -1636,13 +1636,14 @@ class AkshareFetcher(BaseFetcher):
                 ua = random.choice(ua_pool)
                 session.headers.update({
                     "User-Agent": ua,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
                     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                     "Accept-Encoding": "gzip, deflate, br",
                     "Connection": "keep-alive",
+                    "X-Requested-With": "XMLHttpRequest",
                 })
 
-                # 页面预热获取基础Cookie
+                # 页面预热获取Cookie，降低风控
                 try:
                     session.get(f"https://quote.eastmoney.com/{market_prefix}{pure_code}.html", timeout=15)
                     time.sleep(random.uniform(2.0, 4.0))
@@ -1655,8 +1656,8 @@ class AkshareFetcher(BaseFetcher):
                 logger.info(f"[筹码调用] 获取 {stock_code} 筹码分布 第{retry_idx}次尝试")
                 start_ts = time.time()
 
-                # 修正：正确的筹码分布接口（cyq=筹码分布），与akshare底层同源
-                api_url = "https://push2his.eastmoney.com/api/qt/stock/cyq/daykline/get"
+                # 修正：与akshare stock_cyq_em 完全同源的正确接口地址
+                api_url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
                 params = {
                     "lmt": "1",
                     "klt": "101",
@@ -1681,16 +1682,17 @@ class AkshareFetcher(BaseFetcher):
                     return None
 
                 latest_row = data_list[-1].split(",")
-                if len(latest_row) < 10:
+                if len(latest_row) < 11:
                     logger.warning(f"[筹码返回] {stock_code} 字段数量不足")
                     return None
 
-                # 修正：字段索引严格对齐akshare官方返回顺序
-                # 0:日期 1:收盘价 2:获利比例(%) 3:平均成本 4:90成本低 5:90成本高 6:90集中度 7:70成本低 8:70成本高 9:70集中度
-                profit_ratio_val = safe_float(latest_row[2])
-                avg_cost_val = safe_float(latest_row[3])
+                # 字段顺序严格对齐akshare官方：
+                # 0:日期  1:获利比例(%)  2:平均成本  3:90成本低  4:90成本高  5:90集中度
+                # 6:70成本低  7:70成本高  8:70集中度  9:收盘价  10:涨跌幅
+                profit_ratio_val = safe_float(latest_row[1])
+                avg_cost_val = safe_float(latest_row[2])
 
-                # 合法性校验：过滤异常占位值
+                # 合法性校验，过滤异常占位值
                 if profit_ratio_val is None or avg_cost_val is None or profit_ratio_val < 0 or profit_ratio_val > 100:
                     logger.warning(f"[筹码返回] {stock_code} 数值异常，获利比例={profit_ratio_val} 平均成本={avg_cost_val}")
                     return None
@@ -1698,14 +1700,14 @@ class AkshareFetcher(BaseFetcher):
                 chip_data = ChipDistribution(
                     code=stock_code,
                     date=latest_row[0],
-                    profit_ratio=profit_ratio_val / 100,  # 百分比转小数，兼容原有日志格式化
+                    profit_ratio=profit_ratio_val / 100,  # 百分比转小数，兼容日志格式化
                     avg_cost=avg_cost_val,
-                    cost_90_low=safe_float(latest_row[4]),
-                    cost_90_high=safe_float(latest_row[5]),
-                    concentration_90=safe_float(latest_row[6]),
-                    cost_70_low=safe_float(latest_row[7]),
-                    cost_70_high=safe_float(latest_row[8]),
-                    concentration_70=safe_float(latest_row[9]),
+                    cost_90_low=safe_float(latest_row[3]),
+                    cost_90_high=safe_float(latest_row[4]),
+                    concentration_90=safe_float(latest_row[5]),
+                    cost_70_low=safe_float(latest_row[6]),
+                    cost_70_high=safe_float(latest_row[7]),
+                    concentration_70=safe_float(latest_row[8]),
                 )
                 logger.info(f"[筹码成功] {stock_code} 获利比例={chip_data.profit_ratio:.1%} 平均成本={chip_data.avg_cost}")
                 return chip_data
@@ -1715,7 +1717,7 @@ class AkshareFetcher(BaseFetcher):
                 err_msg = str(e).lower()
                 logger.warning(f"[筹码异常] 第{retry_idx}次获取 {stock_code} 失败: {e}")
 
-                if not any(key in err_msg for key in ["connection", "remote", "timeout", "aborted", "disconnected"]):
+                if not any(key in err_msg for key in ["connection", "remote", "timeout", "aborted", "disconnected", "403", "404"]):
                     break
 
                 if retry_idx < max_retry:
