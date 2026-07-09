@@ -1603,7 +1603,17 @@ class AkshareFetcher(BaseFetcher):
         if pure_code.startswith(("sh", "sz", "bj")):
             pure_code = pure_code[2:]
 
-        max_retry = 1
+        # 自动匹配股票市场前缀，修复沪市股票预热404导致的风控拦截
+        if pure_code.startswith(("60", "688", "900")):
+            market_prefix = "sh"
+        elif pure_code.startswith(("00", "30", "200")):
+            market_prefix = "sz"
+        elif pure_code.startswith(("43", "83", "87", "88")):
+            market_prefix = "bj"
+        else:
+            market_prefix = "sz"
+
+        max_retry = 3
         last_error = None
         ua_pool = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -1638,7 +1648,8 @@ class AkshareFetcher(BaseFetcher):
                 try:
                     session.get("https://www.eastmoney.com/", timeout=15)
                     time.sleep(random.uniform(1.0, 2.5))
-                    session.get(f"https://quote.eastmoney.com/sz{pure_code}.html", timeout=15)
+                    # 修复：使用对应市场前缀的个股行情页，保证会话拿到有效Cookie
+                    session.get(f"https://quote.eastmoney.com/{market_prefix}{pure_code}.html", timeout=15)
                     time.sleep(random.uniform(2.0, 4.0))
                 except Exception:
                     pass
@@ -1646,6 +1657,9 @@ class AkshareFetcher(BaseFetcher):
                 # 劫持全局requests使用当前会话，让akshare底层复用带Cookie的会话
                 def _patched_request(method, url, **kwargs):
                     kwargs.setdefault("timeout", 20)
+                    # 自动补全接口请求Referer，降低风控识别概率
+                    kwargs.setdefault("headers", {})
+                    kwargs["headers"]["Referer"] = f"https://quote.eastmoney.com/{market_prefix}{pure_code}.html"
                     return session.request(method, url, **kwargs)
                 requests.request = _patched_request
 
@@ -1683,12 +1697,12 @@ class AkshareFetcher(BaseFetcher):
                 logger.warning(f"[AK异常] 第{retry_idx}次获取 {stock_code} 筹码失败: {e}")
 
                 # 仅连接类风控错误重试，参数错误直接退出
-                if not any(key in err_msg for key in ["connection", "remote", "timeout", "timed out", "aborted"]):
+                if not any(key in err_msg for key in ["connection", "remote", "timeout", "timed out", "aborted", "disconnected"]):
                     break
 
                 # 长间隔冷却重试，给风控窗口留冷却时间
                 if retry_idx < max_retry:
-                    time.sleep(random.uniform(15.0, 25.0))
+                    time.sleep(random.uniform(20.0, 35.0))
 
             finally:
                 # 恢复原生requests，不污染全局
@@ -1697,7 +1711,6 @@ class AkshareFetcher(BaseFetcher):
 
         logger.error(f"[AK最终失败] {stock_code} 筹码分布获取失败: {last_error}")
         return None
-
     def _calc_market_stats(
         self,
         df: pd.DataFrame,
