@@ -1590,8 +1590,8 @@ class AkshareFetcher(BaseFetcher):
             return None
     
     def get_chip_distribution(self, stock_code: str) -> Optional[ChipDistribution]:
-        """AKShare筹码接口 云环境反爬终极优化版 - 原生直连实现"""
-        import requests
+        """筹码接口 - 新浪财经源（GitHub云环境兼容版）"""
+        import akshare as ak
         import random
         import time
 
@@ -1602,111 +1602,35 @@ class AkshareFetcher(BaseFetcher):
         if pure_code.startswith(("sh", "sz", "bj")):
             pure_code = pure_code[2:]
 
-        # 匹配东方财富接口secid规则：沪市=1.代码，深市=0.代码
-        if pure_code.startswith(("60", "688", "900")):
-            secid = f"1.{pure_code}"
-            market_prefix = "sh"
-        elif pure_code.startswith(("00", "30", "200")):
-            secid = f"0.{pure_code}"
-            market_prefix = "sz"
-        elif pure_code.startswith(("43", "83", "87", "88")):
-            secid = f"0.{pure_code}"
-            market_prefix = "bj"
-        else:
-            secid = f"0.{pure_code}"
-            market_prefix = "sz"
-
         max_retry = 2
         last_error = None
-        ua_pool = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-        ]
 
         for retry_idx in range(1, max_retry + 1):
-            session = requests.Session()
             try:
-                ua = random.choice(ua_pool)
-                # 完整浏览器指纹
-                session.headers.update({
-                    "User-Agent": ua,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "same-origin",
-                    "Sec-Fetch-User": "?1",
-                    "sec-ch-ua": '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
-                    "sec-ch-ua-mobile": "?0",
-                    "sec-ch-ua-platform": '"Windows"',
-                })
-
-                # 完整预热链路，确保Cookie写入会话
-                try:
-                    session.get("https://www.eastmoney.com/", timeout=15)
-                    time.sleep(random.uniform(1.5, 3.0))
-                    session.get("https://quote.eastmoney.com/", timeout=15)
-                    time.sleep(random.uniform(1.0, 2.5))
-                    quote_url = f"https://quote.eastmoney.com/{market_prefix}{pure_code}.html"
-                    session.get(quote_url, timeout=15)
-                    time.sleep(random.uniform(3.0, 5.0))
-                except Exception:
-                    pass
-
                 self._enforce_rate_limit()
-                time.sleep(random.uniform(10.0, 18.0))
+                time.sleep(random.uniform(3.0, 6.0))
 
-                logger.info(f"[AK调用] 获取 {stock_code} 筹码分布 第{retry_idx}次尝试")
+                logger.info(f"[筹码调用] 获取 {stock_code} 筹码分布 第{retry_idx}次尝试（新浪源）")
                 start_ts = time.time()
+                # 切换为新浪财经筹码接口，对云环境友好
+                df = ak.stock_cyq_sina(symbol=pure_code)
 
-                # 原生接口直连，完全复用当前会话的Cookie和Header
-                chip_api_url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
-                params = {
-                    "lmt": "1",
-                    "klt": "101",
-                    "secid": secid,
-                    "fields1": "f1,f2,f3,f7",
-                    "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-                    "ut": "b2884a393a59ad64002292a3e90d46f5",
-                    "_": str(int(time.time() * 1000)),
-                }
-                # 接口请求单独设置Referer
-                resp = session.get(
-                    chip_api_url,
-                    params=params,
-                    headers={"Referer": f"https://quote.eastmoney.com/{market_prefix}{pure_code}.html"},
-                    timeout=20
-                )
-                resp.raise_for_status()
-                data = resp.json()
-
-                # 解析数据，对齐akshare返回字段
-                data_list = data.get("data", {}).get("klines", [])
-                if not data_list:
-                    logger.warning(f"[AK返回] {stock_code} 筹码数据为空，耗时 {time.time()-start_ts:.2f}s")
+                if df.empty:
+                    logger.warning(f"[筹码返回] {stock_code} 筹码数据为空，耗时 {time.time()-start_ts:.2f}s")
                     return None
 
-                # 取最新一条数据，拆分字段（与akshare返回顺序完全一致）
-                latest_row = data_list[-1].split(",")
-                if len(latest_row) < 11:
-                    logger.warning(f"[AK返回] {stock_code} 筹码字段不完整")
-                    return None
-
+                latest_row = df.iloc[-1]
                 chip_data = ChipDistribution(
                     code=stock_code,
-                    date=latest_row[0],
-                    profit_ratio=safe_float(latest_row[1]),
-                    avg_cost=safe_float(latest_row[3]),
-                    cost_90_low=safe_float(latest_row[4]),
-                    cost_90_high=safe_float(latest_row[5]),
-                    concentration_90=safe_float(latest_row[6]),
-                    cost_70_low=safe_float(latest_row[7]),
-                    cost_70_high=safe_float(latest_row[8]),
-                    concentration_70=safe_float(latest_row[9]),
+                    date=str(latest_row.get("日期", "")),
+                    profit_ratio=safe_float(latest_row.get("获利比例")),
+                    avg_cost=safe_float(latest_row.get("平均成本")),
+                    cost_90_low=safe_float(latest_row.get("90成本-低")),
+                    cost_90_high=safe_float(latest_row.get("90成本-高")),
+                    concentration_90=safe_float(latest_row.get("90集中度")),
+                    cost_70_low=safe_float(latest_row.get("70成本-低")),
+                    cost_70_high=safe_float(latest_row.get("70成本-高")),
+                    concentration_70=safe_float(latest_row.get("70集中度")),
                 )
                 logger.info(f"[筹码成功] {stock_code} 获利比例={chip_data.profit_ratio:.1%} 平均成本={chip_data.avg_cost}")
                 return chip_data
@@ -1714,20 +1638,15 @@ class AkshareFetcher(BaseFetcher):
             except Exception as e:
                 last_error = e
                 err_msg = str(e).lower()
-                logger.warning(f"[AK异常] 第{retry_idx}次获取 {stock_code} 筹码失败: {e}")
+                logger.warning(f"[筹码异常] 第{retry_idx}次获取 {stock_code} 筹码失败: {e}")
 
-                # 仅连接类风控错误重试，参数错误直接退出
                 if not any(key in err_msg for key in ["connection", "remote", "timeout", "timed out", "aborted", "disconnected"]):
                     break
 
-                # 长间隔冷却，降低风控等级
                 if retry_idx < max_retry:
-                    time.sleep(random.uniform(30.0, 50.0))
+                    time.sleep(random.uniform(10.0, 20.0))
 
-            finally:
-                session.close()
-
-        logger.error(f"[AK最终失败] {stock_code} 筹码分布获取失败: {last_error}")
+        logger.error(f"[筹码最终失败] {stock_code} 筹码分布获取失败: {last_error}")
         return None
     def _calc_market_stats(
         self,
