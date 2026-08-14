@@ -89,7 +89,7 @@ PROMPT_CACHE_DIAGNOSTICS_LEVELS = {"off", "basic", "debug"}
 # Fallback defaults used when ANSPIRE_API_KEYS is reused as legacy OpenAI-compatible source.
 # These are compatibility examples; actual availability should be validated by Anspire console/model entitlement.
 ANSPIRE_LLM_BASE_URL_DEFAULT = "https://open-gateway.anspire.cn/v6"
-ANSPIRE_LLM_MODEL_DEFAULT = "Doubao-Seed-2.0-lite"
+ANSPIRE_LLM_MODEL_DEFAULT = "deepseek-v4-flash"
 
 
 def _has_ntfy_topic_endpoint(value: Optional[str]) -> bool:
